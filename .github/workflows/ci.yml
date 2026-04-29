@@ -42,7 +42,7 @@ jobs:
       - run: make tests-all
 
   prod-image:
-    name: Build prod image, check size & integration
+    name: Build prod image & check size
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -67,5 +67,3 @@ jobs:
             echo "::error::Docker image size ${SIZE_MB}MB exceeds ${MAX_MB}MB limit"
             exit 1
           fi
-      - name: Integration test (botshed shed/passthrough)
-        run: prod/integration-test.sh size-check

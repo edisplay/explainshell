@@ -26,7 +26,17 @@ test-llm:
 botshed-test:
 	cd prod/botshed && go vet ./... && go test ./...
 
-tests-all: lint tests botshed-test e2e
+PROD_IMAGE := explainshell-prod:test
+
+prod-image:
+	@name=$$(gh api "repos/idank/explainshell/releases/tags/db-latest" \
+	   --jq '[.assets[] | select(.name | test("^explainshell-.*\\.db\\.zst$$"))] | sort_by(.created_at) | last | .name'); \
+	 docker build -t $(PROD_IMAGE) -f prod/docker/Dockerfile --build-arg DB_NAME="$$name" .
+
+prod-integration: prod-image
+	prod/integration-test.sh $(PROD_IMAGE)
+
+tests-all: lint tests botshed-test e2e prod-integration
 
 tests-quick: lint tests botshed-test
 
@@ -102,4 +112,4 @@ deploy-local:
 	 doctl apps update "$$DO_APP_ID" --spec "$$tmp"; \
 	 doctl apps create-deployment "$$DO_APP_ID" --force-rebuild --wait
 
-.PHONY: tests e2e e2e-db e2e-update test-llm tests-all tests-quick lint serve db-check ubuntu-archive arch-archive download-latest-db upload-live-db deploy-local botshed-test
+.PHONY: tests e2e e2e-db e2e-update test-llm tests-all tests-quick lint serve db-check ubuntu-archive arch-archive download-latest-db upload-live-db deploy-local botshed-test prod-image prod-integration
