@@ -1,2 +1,8 @@
-worktrees/
-projects/
+# Ignore everything by default; only track curated, sharable bits.
+*
+!.gitignore
+!skills/
+!skills/**
+!agents/
+!agents/**
+!settings.json
