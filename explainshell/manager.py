@@ -564,12 +564,6 @@ def _require_db(ctx: click.Context, *, must_exist: bool = False) -> str:
     help="Write full prompt/response debug artifacts.",
 )
 @click.option(
-    "--limit",
-    type=int,
-    default=None,
-    help="Extract at most this many manpages (after prefiltering).",
-)
-@click.option(
     "--max-size",
     "max_size",
     is_flag=True,
@@ -596,7 +590,6 @@ def extract(
     jobs: int,
     batch: int | None,
     debug: bool,
-    limit: int | None,
     max_size: bool,
     min_size: bool,
 ) -> None:
@@ -608,8 +601,6 @@ def extract(
 
     if jobs < 1:
         raise click.UsageError("--jobs must be >= 1")
-    if limit is not None and limit < 1:
-        raise click.UsageError("--limit must be >= 1")
     if max_size and min_size:
         raise click.UsageError("--max-size and --min-size are mutually exclusive")
     if drop and dry_run:
@@ -713,10 +704,6 @@ def extract(
         logger.info("skipped %d already stored file(s)", already_stored_skipped)
     if content_dup_files:
         logger.info("deduplicated %d content-identical file(s)", len(content_dup_files))
-
-    if limit is not None and len(work_files) > limit:
-        logger.info("limiting to %d of %d file(s)", limit, len(work_files))
-        work_files = work_files[:limit]
 
     extract_total = len(work_files) + prefilter_skipped
 
