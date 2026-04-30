@@ -25,6 +25,8 @@ class ExtractConfig(BaseModel):
     jobs: int = 1
     batch_size: int | None = None
     debug: bool = False
+    max_size: bool = False
+    min_size: bool = False
 
 
 class ExtractSummary(BaseModel):

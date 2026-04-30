@@ -72,6 +72,12 @@ _BOLD = "\033[1m"
 _RESET = "\033[0m"
 _BATCH_MODEL_PREFIXES = ("gemini/", "openai/", "azure/")
 
+# gz size in bytes that splits the corpus into "cheap-model safe" (<=) and
+# "needs capable model" (>). Derived from tools/experiments/eval_size_routing.py:
+# pages at or below this threshold matched the capable model on ~98% of files;
+# disagreement starts in the 4-8 KB bucket.
+_SIZE_FILTER_THRESHOLD = 2048
+
 
 def _fmt_elapsed(seconds: float) -> str:
     """Format elapsed seconds as a human-readable string."""
@@ -566,6 +572,20 @@ def _require_db(ctx: click.Context, *, must_exist: bool = False) -> str:
     default=None,
     help="Extract at most this many manpages (after prefiltering).",
 )
+@click.option(
+    "--max-size",
+    "max_size",
+    is_flag=True,
+    default=False,
+    help="Skip files whose gz size exceeds 2048 bytes (eval-derived threshold).",
+)
+@click.option(
+    "--min-size",
+    "min_size",
+    is_flag=True,
+    default=False,
+    help="Skip files whose gz size is <= 2048 bytes (eval-derived threshold).",
+)
 @click.argument("files", nargs=-1, required=True)
 @click.pass_context
 def extract(
@@ -580,6 +600,8 @@ def extract(
     batch: int | None,
     debug: bool,
     limit: int | None,
+    max_size: bool,
+    min_size: bool,
 ) -> None:
     """Extract options from manpages and store in DB."""
     try:
@@ -591,6 +613,8 @@ def extract(
         raise click.UsageError("--jobs must be >= 1")
     if limit is not None and limit < 1:
         raise click.UsageError("--limit must be >= 1")
+    if max_size and min_size:
+        raise click.UsageError("--max-size and --min-size are mutually exclusive")
     if drop and dry_run:
         raise click.UsageError("--drop and --dry-run are mutually exclusive")
     if overwrite and dry_run:
@@ -650,6 +674,7 @@ def extract(
     db_before = s.counts()
     t0 = time.monotonic()
     prefilter_skipped = 0
+    size_filtered = 0
     symlinks_mapped = 0
     content_deduped = 0
     symlink_files: list[tuple[str, str, str]] = []  # (gz_path, source, canonical)
@@ -688,6 +713,29 @@ def extract(
     work_files: list[str] = []
     for gz_path in gz_files:
         short_path = config.source_from_path(gz_path)
+
+        if max_size or min_size:
+            size = os.path.getsize(gz_path)
+            if max_size and size > _SIZE_FILTER_THRESHOLD:
+                logger.debug(
+                    "size-filter skip %s (%d > %d)",
+                    short_path,
+                    size,
+                    _SIZE_FILTER_THRESHOLD,
+                )
+                prefilter_skipped += 1
+                size_filtered += 1
+                continue
+            if min_size and size <= _SIZE_FILTER_THRESHOLD:
+                logger.debug(
+                    "size-filter skip %s (%d <= %d)",
+                    short_path,
+                    size,
+                    _SIZE_FILTER_THRESHOLD,
+                )
+                prefilter_skipped += 1
+                size_filtered += 1
+                continue
 
         if os.path.islink(gz_path):
             canonical_path = os.path.realpath(gz_path)
@@ -765,8 +813,17 @@ def extract(
         hash_to_canonical[key] = short_path
         work_files.append(gz_path)
 
-    if prefilter_skipped:
-        logger.info("skipped %d already stored file(s)", prefilter_skipped)
+    if size_filtered:
+        which = "--max-size" if max_size else "--min-size"
+        logger.info(
+            "size-filtered %d file(s) by %s (threshold=%d)",
+            size_filtered,
+            which,
+            _SIZE_FILTER_THRESHOLD,
+        )
+    already_stored_skipped = prefilter_skipped - size_filtered
+    if already_stored_skipped:
+        logger.info("skipped %d already stored file(s)", already_stored_skipped)
     if content_dup_files:
         logger.info("deduplicated %d content-identical file(s)", len(content_dup_files))
 
@@ -897,6 +954,8 @@ def extract(
             jobs=jobs,
             batch_size=batch,
             debug=debug,
+            max_size=max_size,
+            min_size=min_size,
         ),
         elapsed_seconds=round(elapsed, 1),
         summary=ExtractSummary(

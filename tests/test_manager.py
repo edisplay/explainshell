@@ -2928,6 +2928,170 @@ class TestExtractLimit(unittest.TestCase):
         self.assertIn("--limit must be >= 1", result.output)
 
 
+class TestExtractSizeFilters(unittest.TestCase):
+    """Verify --max-size / --min-size partition the input at the hardcoded threshold."""
+
+    @patch("explainshell.manager.os.path.getsize")
+    @patch("explainshell.extraction.common.gz_sha256", side_effect=lambda p: p)
+    @patch("explainshell.manager.run")
+    @patch("explainshell.manager.make_extractor")
+    @patch("explainshell.util.collect_gz_files")
+    @patch("explainshell.manager.config.source_from_path")
+    def test_max_size_keeps_files_at_or_below_threshold(
+        self,
+        mock_source,
+        mock_collect,
+        mock_make_ext,
+        mock_run,
+        _mock_sha,
+        mock_getsize,
+    ) -> None:
+        with _temp_db() as db_path:
+            gz_files = [
+                "/fake/distro/release/1/tiny.1.gz",
+                "/fake/distro/release/1/edge.1.gz",
+                "/fake/distro/release/1/big.1.gz",
+            ]
+            sizes = {gz_files[0]: 1024, gz_files[1]: 2048, gz_files[2]: 4096}
+            mock_collect.return_value = gz_files
+            mock_source.side_effect = lambda p: "/".join(p.split("/")[-4:])
+            mock_getsize.side_effect = lambda p: sizes[p]
+            mock_make_ext.return_value = MagicMock()
+            mock_run.return_value = BatchResult()
+
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                [
+                    "--db",
+                    db_path,
+                    "extract",
+                    "--mode",
+                    "llm:openai/test-model",
+                    "--max-size",
+                    "/fake/file.gz",
+                ],
+            )
+
+            self.assertEqual(result.exit_code, 0, result.output)
+            (_, call_files), _ = mock_run.call_args
+            self.assertEqual(
+                sorted(p.split("/")[-1] for p in call_files),
+                ["edge.1.gz", "tiny.1.gz"],
+            )
+
+    @patch("explainshell.manager.os.path.getsize")
+    @patch("explainshell.extraction.common.gz_sha256", side_effect=lambda p: p)
+    @patch("explainshell.manager.run")
+    @patch("explainshell.manager.make_extractor")
+    @patch("explainshell.util.collect_gz_files")
+    @patch("explainshell.manager.config.source_from_path")
+    def test_min_size_keeps_files_above_threshold(
+        self,
+        mock_source,
+        mock_collect,
+        mock_make_ext,
+        mock_run,
+        _mock_sha,
+        mock_getsize,
+    ) -> None:
+        with _temp_db() as db_path:
+            gz_files = [
+                "/fake/distro/release/1/tiny.1.gz",
+                "/fake/distro/release/1/edge.1.gz",
+                "/fake/distro/release/1/big.1.gz",
+            ]
+            sizes = {gz_files[0]: 1024, gz_files[1]: 2048, gz_files[2]: 4096}
+            mock_collect.return_value = gz_files
+            mock_source.side_effect = lambda p: "/".join(p.split("/")[-4:])
+            mock_getsize.side_effect = lambda p: sizes[p]
+            mock_make_ext.return_value = MagicMock()
+            mock_run.return_value = BatchResult()
+
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                [
+                    "--db",
+                    db_path,
+                    "extract",
+                    "--mode",
+                    "llm:openai/test-model",
+                    "--min-size",
+                    "/fake/file.gz",
+                ],
+            )
+
+            self.assertEqual(result.exit_code, 0, result.output)
+            (_, call_files), _ = mock_run.call_args
+            self.assertEqual([p.split("/")[-1] for p in call_files], ["big.1.gz"])
+
+    def test_max_and_min_mutually_exclusive(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "--db",
+                "/tmp/test.db",
+                "extract",
+                "--mode",
+                "llm:test-model",
+                "--min-size",
+                "--max-size",
+                "/fake/file.gz",
+            ],
+        )
+
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("--max-size and --min-size are mutually exclusive", result.output)
+
+    @patch("explainshell.manager.os.path.getsize")
+    @patch("explainshell.extraction.common.gz_sha256", side_effect=lambda p: p)
+    @patch("explainshell.manager.run")
+    @patch("explainshell.manager.make_extractor")
+    @patch("explainshell.util.collect_gz_files")
+    @patch("explainshell.manager.config.source_from_path")
+    def test_size_filter_recorded_in_report(
+        self,
+        mock_source,
+        mock_collect,
+        mock_make_ext,
+        mock_run,
+        _mock_sha,
+        mock_getsize,
+    ) -> None:
+        with _temp_db() as db_path:
+            gz_files = ["/fake/distro/release/1/foo.1.gz"]
+            mock_collect.return_value = gz_files
+            mock_source.side_effect = lambda p: "/".join(p.split("/")[-4:])
+            mock_getsize.return_value = 1000
+            mock_make_ext.return_value = MagicMock()
+            mock_run.return_value = BatchResult()
+
+            runner = CliRunner()
+            with tempfile.TemporaryDirectory() as run_dir:
+                with patch("explainshell.manager._setup_logging", return_value=run_dir):
+                    result = runner.invoke(
+                        cli,
+                        [
+                            "--db",
+                            db_path,
+                            "extract",
+                            "--mode",
+                            "llm:openai/test-model",
+                            "--max-size",
+                            "/fake/file.gz",
+                        ],
+                    )
+
+                self.assertEqual(result.exit_code, 0, result.output)
+                with open(os.path.join(run_dir, "report.json")) as f:
+                    data = json.load(f)
+                self.assertTrue(data["config"]["max_size"])
+                # min_size defaults to False; exclude_none keeps False values.
+                self.assertFalse(data["config"].get("min_size", False))
+
+
 class TestCollectGzFilesValidation(unittest.TestCase):
     """collect_gz_files must reject non-.gz file paths."""
 
