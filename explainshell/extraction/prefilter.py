@@ -40,7 +40,7 @@ class SizeSkip:
     short_path: str
     size: int
     threshold: int
-    direction: str  # "max" or "min"
+    direction: str  # "small" or "large" — the bucket the filter wanted to keep
 
 
 @dataclass(frozen=True)
@@ -106,8 +106,8 @@ class Classifier:
     overwrite: bool
     filter_mode: str | None
     filter_model: str | None
-    max_size: bool
-    min_size: bool
+    small_only: bool
+    large_only: bool
     size_threshold: int
     normalized_inputs: set[str]
 
@@ -128,12 +128,12 @@ class Classifier:
     def classify(self, gz_path: str) -> Decision:
         short_path = config.source_from_path(gz_path)
 
-        if self.max_size or self.min_size:
+        if self.small_only or self.large_only:
             size = os.path.getsize(gz_path)
-            if self.max_size and size > self.size_threshold:
-                return SizeSkip(gz_path, short_path, size, self.size_threshold, "max")
-            if self.min_size and size <= self.size_threshold:
-                return SizeSkip(gz_path, short_path, size, self.size_threshold, "min")
+            if self.small_only and size > self.size_threshold:
+                return SizeSkip(gz_path, short_path, size, self.size_threshold, "small")
+            if self.large_only and size <= self.size_threshold:
+                return SizeSkip(gz_path, short_path, size, self.size_threshold, "large")
 
         if os.path.islink(gz_path):
             canonical_path = os.path.realpath(gz_path)

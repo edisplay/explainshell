@@ -101,13 +101,13 @@ The `--mode` flag selects the extraction strategy:
 
 - `llm:<provider/model>`: sends the manpage text (converted to markdown via `mandoc -T markdown`) to an LLM for extraction. The LLM returns line ranges into the source text, not generated descriptions, so hallucinations are structurally impossible - the actual help text is always sliced from the original manpage. Example: `--mode llm:openai/gpt-5-mini`.
 
-Other `extract` flags: `--overwrite` (re-process existing entries), `--filter-db <spec>` (with `--overwrite`, only re-extract rows whose stored extractor matches `<spec>`; same syntax as `--mode`), `--dry-run` (extract without writing to DB), `-j <N>` (parallel workers), `--batch <N>` (provider batch API for LLM modes, including `gemini/`, `openai/`, and `azure/`), `--max-size` / `--min-size` (partition the corpus at ~2 KB gz so a cheap model handles small pages and a capable one handles the rest):
+Other `extract` flags: `--overwrite` (re-process existing entries), `--filter-db <spec>` (with `--overwrite`, only re-extract rows whose stored extractor matches `<spec>`; same syntax as `--mode`), `--dry-run` (extract without writing to DB), `-j <N>` (parallel workers), `--batch <N>` (provider batch API for LLM modes, including `gemini/`, `openai/`, and `azure/`), `--small-only` / `--large-only` (partition the corpus at ~2 KB gz so a cheap model handles small pages and a capable one handles the rest):
 
 ```bash
 # pass 1 - cheap model on small pages
-$ python -m explainshell.manager extract --mode llm:codex/gpt-5.4-mini/medium --max-size manpages/...
+$ python -m explainshell.manager extract --mode llm:codex/gpt-5.4-mini/medium --small-only manpages/...
 # pass 2 - capable model on the rest (already-stored small pages are skipped)
-$ python -m explainshell.manager extract --mode llm:codex/gpt-5.4/medium --min-size manpages/...
+$ python -m explainshell.manager extract --mode llm:codex/gpt-5.4/medium --large-only manpages/...
 ```
 
 To compare extraction results, use the `diff` subcommand:

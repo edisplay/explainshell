@@ -57,8 +57,8 @@ def _make_classifier(
     overwrite: bool = False,
     filter_mode: str | None = None,
     filter_model: str | None = None,
-    max_size: bool = False,
-    min_size: bool = False,
+    small_only: bool = False,
+    large_only: bool = False,
     threshold: int = 2048,
     inputs: set[str] | None = None,
 ) -> Classifier:
@@ -67,8 +67,8 @@ def _make_classifier(
         overwrite=overwrite,
         filter_mode=filter_mode,
         filter_model=filter_model,
-        max_size=max_size,
-        min_size=min_size,
+        small_only=small_only,
+        large_only=large_only,
         size_threshold=threshold,
         normalized_inputs=inputs or set(),
     )
@@ -87,35 +87,35 @@ class TestClassifySize(unittest.TestCase):
 
     @patch("os.path.islink", return_value=False)
     @patch("os.path.getsize", return_value=4096)
-    def test_max_size_skips_large_file(self, _gs, _il) -> None:
-        c = _make_classifier(_FakeStore(), max_size=True, threshold=2048)
+    def test_small_only_skips_large_file(self, _gs, _il) -> None:
+        c = _make_classifier(_FakeStore(), small_only=True, threshold=2048)
         d = c.classify("/x/u/26.04/1/foo.1.gz")
         self.assertIsInstance(d, SizeSkip)
         assert isinstance(d, SizeSkip)
-        self.assertEqual(d.direction, "max")
+        self.assertEqual(d.direction, "small")
         self.assertEqual(d.size, 4096)
 
     @patch("os.path.islink", return_value=False)
     @patch("os.path.getsize", return_value=2048)
     @patch("explainshell.extraction.common.gz_sha256", return_value="h")
-    def test_max_size_passes_at_threshold(self, _h, _gs, _il) -> None:
-        c = _make_classifier(_FakeStore(), max_size=True, threshold=2048)
+    def test_small_only_passes_at_threshold(self, _h, _gs, _il) -> None:
+        c = _make_classifier(_FakeStore(), small_only=True, threshold=2048)
         self.assertIsInstance(c.classify("/x/u/26.04/1/foo.1.gz"), Work)
 
     @patch("os.path.islink", return_value=False)
     @patch("os.path.getsize", return_value=2048)
-    def test_min_size_skips_at_threshold(self, _gs, _il) -> None:
-        c = _make_classifier(_FakeStore(), min_size=True, threshold=2048)
+    def test_large_only_skips_at_threshold(self, _gs, _il) -> None:
+        c = _make_classifier(_FakeStore(), large_only=True, threshold=2048)
         d = c.classify("/x/u/26.04/1/foo.1.gz")
         self.assertIsInstance(d, SizeSkip)
         assert isinstance(d, SizeSkip)
-        self.assertEqual(d.direction, "min")
+        self.assertEqual(d.direction, "large")
 
     @patch("os.path.islink", return_value=False)
     @patch("os.path.getsize", return_value=4096)
     @patch("explainshell.extraction.common.gz_sha256", return_value="h")
-    def test_min_size_passes_above_threshold(self, _h, _gs, _il) -> None:
-        c = _make_classifier(_FakeStore(), min_size=True, threshold=2048)
+    def test_large_only_passes_above_threshold(self, _h, _gs, _il) -> None:
+        c = _make_classifier(_FakeStore(), large_only=True, threshold=2048)
         self.assertIsInstance(c.classify("/x/u/26.04/1/foo.1.gz"), Work)
 
 

@@ -268,7 +268,7 @@ def _format_decision(d: prefilter.Decision) -> str:
     if isinstance(d, prefilter.Work):
         return f"WORK         {d.short_path}"
     if isinstance(d, prefilter.SizeSkip):
-        cmp = ">" if d.direction == "max" else "<="
+        cmp = ">" if d.direction == "small" else "<="
         return f"SIZE-SKIP    {d.short_path} ({d.size} {cmp} {d.threshold})"
     if isinstance(d, prefilter.AlreadyStored):
         return f"ALREADY      {d.short_path}"
@@ -293,8 +293,8 @@ def _run_plan(
     overwrite: bool,
     filter_mode: str | None,
     filter_model: str | None,
-    max_size: bool,
-    min_size: bool,
+    small_only: bool,
+    large_only: bool,
 ) -> None:
     """Print the prefilter classification for each file; no extraction, no writes."""
     classifier = prefilter.Classifier(
@@ -302,8 +302,8 @@ def _run_plan(
         overwrite=overwrite,
         filter_mode=filter_mode,
         filter_model=filter_model,
-        max_size=max_size,
-        min_size=min_size,
+        small_only=small_only,
+        large_only=large_only,
         size_threshold=_SIZE_FILTER_THRESHOLD,
         normalized_inputs={os.path.normpath(p) for p in gz_files},
     )
@@ -555,18 +555,18 @@ def _require_db(ctx: click.Context, *, must_exist: bool = False) -> str:
     help="Write full prompt/response debug artifacts.",
 )
 @click.option(
-    "--max-size",
-    "max_size",
+    "--small-only",
+    "small_only",
     is_flag=True,
     default=False,
-    help="Skip files whose gz size exceeds 2048 bytes (eval-derived threshold).",
+    help="Process only files whose gz size is <= 2048 bytes (route to a cheap model).",
 )
 @click.option(
-    "--min-size",
-    "min_size",
+    "--large-only",
+    "large_only",
     is_flag=True,
     default=False,
-    help="Skip files whose gz size is <= 2048 bytes (eval-derived threshold).",
+    help="Process only files whose gz size exceeds 2048 bytes (route to a capable model).",
 )
 @click.argument("files", nargs=-1, required=True)
 @click.pass_context
@@ -581,8 +581,8 @@ def extract(
     jobs: int,
     batch: int | None,
     debug: bool,
-    max_size: bool,
-    min_size: bool,
+    small_only: bool,
+    large_only: bool,
 ) -> None:
     """Extract options from manpages and store in DB."""
     try:
@@ -592,8 +592,8 @@ def extract(
 
     if jobs < 1:
         raise click.UsageError("--jobs must be >= 1")
-    if max_size and min_size:
-        raise click.UsageError("--max-size and --min-size are mutually exclusive")
+    if small_only and large_only:
+        raise click.UsageError("--small-only and --large-only are mutually exclusive")
     if drop and dry_run:
         raise click.UsageError("--drop and --dry-run are mutually exclusive")
 
@@ -641,8 +641,8 @@ def extract(
             overwrite=overwrite,
             filter_mode=filter_mode,
             filter_model=filter_model,
-            max_size=max_size,
-            min_size=min_size,
+            small_only=small_only,
+            large_only=large_only,
         )
         return
 
@@ -669,8 +669,8 @@ def extract(
         overwrite=overwrite,
         filter_mode=filter_mode,
         filter_model=filter_model,
-        max_size=max_size,
-        min_size=min_size,
+        small_only=small_only,
+        large_only=large_only,
         size_threshold=_SIZE_FILTER_THRESHOLD,
         normalized_inputs={os.path.normpath(p) for p in gz_files},
     )
@@ -683,7 +683,7 @@ def extract(
     work_files = classified.work_files
 
     if classified.size_filtered:
-        which = "--max-size" if max_size else "--min-size"
+        which = "--small-only" if small_only else "--large-only"
         logger.info(
             "size-filtered %d file(s) by %s (threshold=%d)",
             classified.size_filtered,
@@ -819,8 +819,8 @@ def extract(
             jobs=jobs,
             batch_size=batch,
             debug=debug,
-            max_size=max_size,
-            min_size=min_size,
+            small_only=small_only,
+            large_only=large_only,
         ),
         elapsed_seconds=round(elapsed, 1),
         summary=ExtractSummary(

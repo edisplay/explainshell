@@ -2587,7 +2587,7 @@ class TestExtractionReport(unittest.TestCase):
 
 
 class TestExtractSizeFilters(unittest.TestCase):
-    """Verify --max-size / --min-size partition the input at the hardcoded threshold."""
+    """Verify --small-only / --large-only partition the input at the hardcoded threshold."""
 
     @patch("explainshell.manager.os.path.getsize")
     @patch("explainshell.extraction.common.gz_sha256", side_effect=lambda p: p)
@@ -2595,7 +2595,7 @@ class TestExtractSizeFilters(unittest.TestCase):
     @patch("explainshell.manager.make_extractor")
     @patch("explainshell.util.collect_gz_files")
     @patch("explainshell.manager.config.source_from_path")
-    def test_max_size_keeps_files_at_or_below_threshold(
+    def test_small_only_keeps_files_at_or_below_threshold(
         self,
         mock_source,
         mock_collect,
@@ -2626,7 +2626,7 @@ class TestExtractSizeFilters(unittest.TestCase):
                     "extract",
                     "--mode",
                     "llm:openai/test-model",
-                    "--max-size",
+                    "--small-only",
                     "/fake/file.gz",
                 ],
             )
@@ -2644,7 +2644,7 @@ class TestExtractSizeFilters(unittest.TestCase):
     @patch("explainshell.manager.make_extractor")
     @patch("explainshell.util.collect_gz_files")
     @patch("explainshell.manager.config.source_from_path")
-    def test_min_size_keeps_files_above_threshold(
+    def test_large_only_keeps_files_above_threshold(
         self,
         mock_source,
         mock_collect,
@@ -2675,7 +2675,7 @@ class TestExtractSizeFilters(unittest.TestCase):
                     "extract",
                     "--mode",
                     "llm:openai/test-model",
-                    "--min-size",
+                    "--large-only",
                     "/fake/file.gz",
                 ],
             )
@@ -2684,7 +2684,7 @@ class TestExtractSizeFilters(unittest.TestCase):
             (_, call_files), _ = mock_run.call_args
             self.assertEqual([p.split("/")[-1] for p in call_files], ["big.1.gz"])
 
-    def test_max_and_min_mutually_exclusive(self) -> None:
+    def test_small_and_large_mutually_exclusive(self) -> None:
         runner = CliRunner()
         result = runner.invoke(
             cli,
@@ -2694,14 +2694,16 @@ class TestExtractSizeFilters(unittest.TestCase):
                 "extract",
                 "--mode",
                 "llm:test-model",
-                "--min-size",
-                "--max-size",
+                "--large-only",
+                "--small-only",
                 "/fake/file.gz",
             ],
         )
 
         self.assertNotEqual(result.exit_code, 0)
-        self.assertIn("--max-size and --min-size are mutually exclusive", result.output)
+        self.assertIn(
+            "--small-only and --large-only are mutually exclusive", result.output
+        )
 
     @patch("explainshell.manager.os.path.getsize")
     @patch("explainshell.extraction.common.gz_sha256", side_effect=lambda p: p)
@@ -2739,7 +2741,7 @@ class TestExtractSizeFilters(unittest.TestCase):
                             "extract",
                             "--mode",
                             "llm:openai/test-model",
-                            "--max-size",
+                            "--small-only",
                             "/fake/file.gz",
                         ],
                     )
@@ -2747,9 +2749,9 @@ class TestExtractSizeFilters(unittest.TestCase):
                 self.assertEqual(result.exit_code, 0, result.output)
                 with open(os.path.join(run_dir, "report.json")) as f:
                     data = json.load(f)
-                self.assertTrue(data["config"]["max_size"])
-                # min_size defaults to False; exclude_none keeps False values.
-                self.assertFalse(data["config"].get("min_size", False))
+                self.assertTrue(data["config"]["small_only"])
+                # large_only defaults to False; exclude_none keeps False values.
+                self.assertFalse(data["config"].get("large_only", False))
 
 
 class TestCollectGzFilesValidation(unittest.TestCase):
