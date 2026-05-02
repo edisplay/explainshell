@@ -102,6 +102,20 @@ class TestExplainRouter(unittest.TestCase):
         self.assertEqual(rv.status_code, 200)
         self.assertIn(b"bar", rv.data)
 
+    def test_explain_program_links_to_raw_source_in_debug(self):
+        self.app.config["DEBUG"] = True
+        rv = self.client.get("/explain/bar")
+        self.assertEqual(rv.status_code, 200)
+        self.assertIn(b'href="/manpage/ubuntu/26.04/1/bar.1"', rv.data)
+        self.assertIn(b"source manpage:", rv.data)
+
+    def test_explain_program_omits_raw_source_link_outside_debug(self):
+        self.app.config["DEBUG"] = False
+        rv = self.client.get("/explain/bar")
+        self.assertEqual(rv.status_code, 200)
+        self.assertNotIn(b"source manpage:", rv.data)
+        self.assertNotIn(b"/manpage/ubuntu/26.04/1/bar.1", rv.data)
+
     # -- Distro-prefixed routes --
 
     def test_explain_cmd_with_distro(self):
@@ -412,6 +426,36 @@ class TestExplainCacheHeaders(unittest.TestCase):
         rv = self.client.get("/explain/nosuchprogram")
         self.assertEqual(rv.status_code, 200)
         self.assertIn(b"missing man page", rv.data)
+        self.assertNotIn("ETag", rv.headers)
+        self.assertNotIn("Cache-Control", rv.headers)
+
+
+class TestExplainCacheHeadersDebug(unittest.TestCase):
+    """In DEBUG, /explain responses skip ETag/Cache-Control so template
+    edits show up on the next request without a hard reload."""
+
+    _RAW = TestExplainCacheHeaders._RAW
+
+    def setUp(self):
+        self.app = create_app()
+        self.app.config["DEBUG"] = True
+        self.app.config["APP_VERSION"] = "deadbeef"
+        self.app.config["DB_SHA256"] = "abcdef0123456789fedcba9876543210"
+        self.store = Store.create(":memory:")
+        self.store.add_manpage(TestExplainCacheHeaders._make_mp(self), self._RAW)
+        _use_store(self.app, self.store)
+        self.app.config["TESTING"] = True
+        self.client = self.app.test_client()
+
+    def test_program_view_has_no_cache_headers(self):
+        rv = self.client.get("/explain/bar")
+        self.assertEqual(rv.status_code, 200)
+        self.assertNotIn("ETag", rv.headers)
+        self.assertNotIn("Cache-Control", rv.headers)
+
+    def test_cmd_view_has_no_cache_headers(self):
+        rv = self.client.get("/explain?cmd=bar+-a")
+        self.assertEqual(rv.status_code, 200)
         self.assertNotIn("ETag", rv.headers)
         self.assertNotIn("Cache-Control", rv.headers)
 
