@@ -26,6 +26,7 @@ trap cleanup EXIT
 echo "==> running $IMAGE on :$PORT"
 docker run -d --name "$NAME" \
   -e DB_PATH=/opt/webapp/explainshell.db \
+  -e DEBUG=false \
   -p "$PORT:8080" \
   "$IMAGE" >/dev/null
 
