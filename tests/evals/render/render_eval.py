@@ -77,6 +77,11 @@ _TAGS = (
     "ul",
 )
 _OPTION_RE = re.compile(r"(?<![\w\\])(?:\\?-{1,2}|\\\[mi\])[-A-Za-z0-9][-_A-Za-z0-9]*")
+_UNESCAPED_STAR_RUN_RE = re.compile(r"(?<!\\)\*+")
+_UNESCAPED_UNDER_RUN_RE = re.compile(r"(?<!\\)_+")
+
+
+_SENSITIVE_CHARS = ("\\", "[", "]", "*", "_", "`", "<", ">")
 
 
 class TagCounter(HTMLParser):
@@ -86,6 +91,7 @@ class TagCounter(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.tags: Counter[str] = Counter()
         self.data_chars = 0
+        self.char_hist: Counter[str] = Counter()
         self.max_depth = 0
         self._depth = 0
 
@@ -102,6 +108,9 @@ class TagCounter(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         self.data_chars += len(data)
+        for ch in data:
+            if ch in _SENSITIVE_CHARS:
+                self.char_hist[ch] += 1
 
 
 @dataclass(frozen=True)
@@ -148,6 +157,8 @@ def _line_metrics(markdown: str) -> dict[str, Any]:
         "lines_with_multiple_option_like_tokens": sum(
             1 for count in option_counts if count >= 2
         ),
+        "unescaped_star_runs": len(_UNESCAPED_STAR_RUN_RE.findall(markdown)),
+        "unescaped_under_runs": len(_UNESCAPED_UNDER_RUN_RE.findall(markdown)),
     }
 
 
@@ -159,6 +170,7 @@ def _html_metrics(html: str) -> dict[str, Any]:
         "tags": tags,
         "data_chars": parser.data_chars,
         "max_depth": parser.max_depth,
+        "chars": {ch: parser.char_hist.get(ch, 0) for ch in _SENSITIVE_CHARS},
     }
 
 
@@ -267,6 +279,8 @@ def _suspicious_changes(
         "markdown.giant_lines_500": 0.0,
         "markdown.giant_lines_1000": 0.0,
         "markdown.max_option_like_tokens_on_line": 0.0,
+        "markdown.unescaped_star_runs": 0.0,
+        "markdown.unescaped_under_runs": 0.0,
         "markdown.char_count": 0.02,
         "filtered.line_count": 0.0,
         "html.tags.a": 0.0,
@@ -288,6 +302,14 @@ def _suspicious_changes(
         "html.tags.ol": 0.0,
         "html.tags.p": 0.0,
         "html.data_chars": 0.02,
+        "html.chars.\\": 0.0,
+        "html.chars.[": 0.0,
+        "html.chars.]": 0.0,
+        "html.chars.*": 0.0,
+        "html.chars._": 0.0,
+        "html.chars.`": 0.0,
+        "html.chars.<": 0.0,
+        "html.chars.>": 0.0,
     }
     for key, tolerance in checks.items():
         before = _get_metric(old, key)
