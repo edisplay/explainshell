@@ -86,10 +86,29 @@ def _split_sections(text: str) -> list[tuple[int, str]]:
 
 
 def clean_mandoc_artifacts(text: str) -> str:
-    """Strip HTML entities that mandoc -T markdown emits but serve no purpose. Easier
-    to clean these here than to fix mandoc to stop emitting them.
+    """Normalize HTML entities mandoc -T markdown emits.
+
+    `&nbsp;` becomes a plain space — its non-breaking semantics aren't needed
+    downstream and ASCII whitespace is friendlier to the LLM.
+
+    `&zwnj;` is preserved. mandoc inserts it between abutting bold/italic
+    emphasis spans (`**foo**&zwnj;*bar*`) so CommonMark's delimiter-run
+    flanking rules see the `;` (ASCII punctuation) and parse the runs as
+    separate spans. Stripping it produced patterns like
+    `**--config-file=*****file*` in stored option text, which CommonMark
+    folds into garbled emphasis.
+
+    The choice of `&zwnj;` is unusual industry-wide — Pandoc and Pod::Markdown
+    take different routes (Pandoc emits no separator; Pod::Markdown uses `_`
+    for italic to avoid collisions). Both alternatives fail for our corpus:
+    Pandoc's "trust CommonMark rule-of-3" misparses the
+    `**flag**+arg-name` pattern that mandoc-emitted man pages produce
+    constantly; Pod::Markdown's `_` italic breaks intraword italic
+    (`_N_th` → literal underscores) which is rampant in real man pages
+    (ffmpeg.1, git.1, tar.1, ...). mandoc's `&zwnj;` happens to dodge both
+    pitfalls for our specific consumer (cmarkgfm + LLM).
     """
-    return text.replace("&zwnj;", "").replace("&nbsp;", " ")
+    return text.replace("&nbsp;", " ")
 
 
 def filter_sections(text: str) -> tuple[str, dict[str, int]]:

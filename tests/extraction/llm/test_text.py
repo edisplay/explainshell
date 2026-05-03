@@ -84,11 +84,15 @@ class TestGetManpageTextReal(unittest.TestCase):
         text = get_manpage_text(_FIND_GZ)
         self.assertNotIn("\xa0", text)
 
-    def test_no_zwnj_entities(self):
-        """clean_mandoc_artifacts strips &zwnj; entities emitted by mandoc -T markdown."""
-        raw = get_manpage_text(_FIND_GZ)
+    def test_zwnj_entities_preserved(self):
+        """clean_mandoc_artifacts preserves &zwnj; — mandoc inserts it between
+        abutting bold/italic spans so CommonMark parses them as separate runs.
+        Stripping it produced garbled emphasis (e.g. **--config-file=*****file*)
+        in stored option text. See the function's docstring for context.
+        """
+        raw = "**foo**&zwnj;**bar**"
         cleaned = clean_mandoc_artifacts(raw)
-        self.assertNotIn("&zwnj;", cleaned)
+        self.assertIn("&zwnj;", cleaned)
 
     def test_no_nbsp_entities(self):
         """clean_mandoc_artifacts replaces &nbsp; entities with plain spaces."""
