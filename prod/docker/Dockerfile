@@ -31,6 +31,12 @@ COPY prod/docker/Caddyfile /etc/caddy/Caddyfile
 COPY prod/docker/start.sh .
 COPY explainshell/ explainshell/
 
+# Bake app-level runtime config into the image so `docker run <image>`
+# locally is byte-identical to prod. Anything that differs per
+# environment (secrets, DB build pin, GIT_SHA) stays out.
+ENV DEBUG=false
+ENV DB_PATH=/opt/webapp/explainshell.db
+
 # Surfaced in cache ETags so a code-only deploy still invalidates.
 # Passed in by the deploy pipeline (see the deploy workflows under
 # .github/workflows/).

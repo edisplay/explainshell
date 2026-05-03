@@ -28,18 +28,8 @@ services:
       timeout_seconds: 10
       failure_threshold: 5
     envs:
-      - key: DB_PATH
-        value: /opt/webapp/explainshell.db
-        scope: RUN_TIME
-      - key: HOST_IP
-        value: 0.0.0.0
-        scope: RUN_TIME
-      - key: DEBUG
-        value: "false"
-        scope: RUN_TIME
-      - key: PORT
-        value: "8080"
-        scope: RUN_TIME
+      # App-level runtime config (DEBUG, DB_PATH) is baked into the image
+      # so local runs match prod exactly; only deploy-time values live here.
       # Build args, rendered by envsubst in CI.
       - key: DB_NAME
         value: ${DB_NAME}
