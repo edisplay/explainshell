@@ -119,3 +119,13 @@ This is a review tool, not a golden snapshot test — it is intentionally not
 wired into `make tests-all`. Run it manually when changing
 `tools/mandoc-md`, `explainshell/web/markdown.py`, or the
 `clean_mandoc_artifacts`/`filter_sections` helpers.
+
+## Known rendering quirks
+
+`.TP \ ` (empty-tag tagged paragraph with `\ ` placeholder) renders as
+`<p>&nbsp;</p>` in HTML — a visible blank-line block. Earlier mandoc-md
+versions emitted these as `**** ` lines, which CommonMark folded into
+`<hr />` thematic breaks; the current binary preserves the authorial
+intent of an empty paragraph. The candidate page is therefore vertically
+taller than baseline at every such site, but no spurious horizontal rules
+appear. This is by design.
