@@ -154,3 +154,4 @@ class ExtractionReport(BaseModel):
     failures: list[FailureEntry] = Field(default_factory=list)
     skips: list[SkipEntry] = Field(default_factory=list)
     batch_manifest: dict[str, Any] | None = None
+    reason: str | None = None

@@ -392,6 +392,66 @@ class TestLlmManagerDryRun(unittest.TestCase):
         self.assertNotEqual(result.exit_code, 0)
         self.assertIn("Database not found", result.output)
 
+    @patch("explainshell.util.collect_gz_files")
+    def test_reason_required_for_bulk_extraction(self, mock_collect):
+        mock_collect.return_value = [f"/fake/page-{i}.1.gz" for i in range(101)]
+        with _temp_db() as db_path:
+            Store.create(db_path).close()
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                [
+                    "--db",
+                    db_path,
+                    "extract",
+                    "--mode",
+                    "llm:test-model",
+                    *[f"/fake/page-{i}.1.gz" for i in range(101)],
+                ],
+            )
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("--reason is required", result.output)
+        self.assertIn("got 101", result.output)
+
+    @patch("explainshell.util.collect_gz_files")
+    def test_reason_gate_skipped_for_dry_run(self, mock_collect):
+        mock_collect.return_value = [f"/fake/page-{i}.1.gz" for i in range(101)]
+        with _temp_db() as db_path:
+            Store.create(db_path).close()
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                [
+                    "--db",
+                    db_path,
+                    "extract",
+                    "--mode",
+                    "llm:test-model",
+                    "--dry-run",
+                    *[f"/fake/page-{i}.1.gz" for i in range(101)],
+                ],
+            )
+        self.assertNotIn("--reason is required", result.output)
+
+    @patch("explainshell.util.collect_gz_files")
+    def test_reason_gate_skipped_under_threshold(self, mock_collect):
+        mock_collect.return_value = [f"/fake/page-{i}.1.gz" for i in range(100)]
+        with _temp_db() as db_path:
+            Store.create(db_path).close()
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                [
+                    "--db",
+                    db_path,
+                    "extract",
+                    "--mode",
+                    "llm:test-model",
+                    *[f"/fake/page-{i}.1.gz" for i in range(100)],
+                ],
+            )
+        self.assertNotIn("--reason is required", result.output)
+
     @patch("explainshell.extraction.common.gz_sha256", side_effect=lambda p: p)
     @patch("explainshell.manager.run")
     @patch("explainshell.manager.make_extractor")
@@ -2257,6 +2317,32 @@ class TestShowCli(unittest.TestCase):
         self.assertIn("model:    openai/gpt-5", result.output)
         self.assertIn("result:   ok=10 skip=5 fail=1", result.output)
         self.assertIn("db:       110(+10) mappings=220(+20)", result.output)
+        self.assertIn("reason:   (no reason provided)", result.output)
+
+    def test_show_events_extraction_with_reason(self):
+        self.store.log_event(
+            "extraction",
+            {
+                "version": 1,
+                "command": "extract",
+                "timestamp": "2026-05-04T10:00:00+00:00",
+                "git": {"commit": "abc123", "commit_short": "abc", "dirty": False},
+                "config": {"mode": "llm", "model": "openai/gpt-5"},
+                "elapsed_seconds": 5.0,
+                "summary": {"succeeded": 10, "skipped": 0, "failed": 0},
+                "db_before": {"manpages": 100, "mappings": 200},
+                "db_after": {"manpages": 110, "mappings": 220},
+                "reason": "fix garbled emphasis after mandoc 89d8f45",
+            },
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--db", self.db_path, "show", "events"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn(
+            "reason:   fix garbled emphasis after mandoc 89d8f45", result.output
+        )
 
     def test_show_events_limit(self):
         for i in range(5):
@@ -2531,6 +2617,16 @@ class TestExtractionReport(unittest.TestCase):
 
         data = self._read_report()
         self.assertNotIn("batch_manifest", data)
+        self.assertNotIn("reason", data)
+
+    def test_reason_embedded(self) -> None:
+        """reason string is included in the JSON when provided."""
+
+        report = self._make_report(reason="bulk re-run after mandoc emphasis fix")
+        _write_report(self._run_dir, report)
+
+        data = self._read_report()
+        self.assertEqual(data["reason"], "bulk re-run after mandoc emphasis fix")
 
     def test_batch_manifest_embedded(self) -> None:
         """batch_manifest dict is included when provided."""

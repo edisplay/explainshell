@@ -572,6 +572,15 @@ def _require_db(ctx: click.Context, *, must_exist: bool = False) -> str:
     default=False,
     help="Process only files whose gz size exceeds 2048 bytes (route to a capable model).",
 )
+@click.option(
+    "--reason",
+    default=None,
+    help=(
+        "Why this extraction is being run. Recorded in the db_events row so future "
+        "reviewers can see what motivated bulk re-runs. Required for runs with "
+        "more than 100 manpages."
+    ),
+)
 @click.argument("files", nargs=-1, required=True)
 @click.pass_context
 def extract(
@@ -587,6 +596,7 @@ def extract(
     debug: bool,
     small_only: bool,
     large_only: bool,
+    reason: str | None,
 ) -> None:
     """Extract options from manpages and store in DB."""
     try:
@@ -629,6 +639,11 @@ def extract(
         raise click.UsageError(str(e))
     if not gz_files:
         raise click.UsageError("No .gz files found.")
+    if not dry_run and len(gz_files) > 100 and not reason:
+        raise click.UsageError(
+            f"--reason is required when extracting more than 100 manpages "
+            f"(got {len(gz_files)})"
+        )
 
     if drop:
         answer = input("Really drop all data? (y/n) ").strip().lower()
@@ -871,6 +886,7 @@ def extract(
         failures=failures,
         skips=skips,
         batch_manifest=manifest.to_dict() if manifest is not None else None,
+        reason=reason,
     )
     _write_report(run_dir, report)
 
@@ -1215,6 +1231,7 @@ def show_events(ctx: click.Context, limit: int) -> None:
                 f"  db:       {report.db_after.manpages}({dm:+d})"
                 f" mappings={report.db_after.mappings}({dmap:+d})"
             )
+            click.echo(f"  reason:   {report.reason or '(no reason provided)'}")
         else:
             meta = ev.get("metadata", {})
             for k, v in meta.items():
