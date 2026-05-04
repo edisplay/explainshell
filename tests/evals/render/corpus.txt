@@ -42,3 +42,10 @@ manpages/ubuntu/26.04/8/lsof.8.gz
 manpages/ubuntu/26.04/8/tcpdump.8.gz
 manpages/ubuntu/26.04/8/iptables.8.gz
 manpages/ubuntu/26.04/1/strace.1.gz
+
+# Known quad-star producers — kept in the corpus so `audit` has signal for
+# the `quad_star_run` rule.
+manpages/arch/latest/1/sox.1.gz
+manpages/arch/latest/1/hwloc-bind.1.gz
+manpages/arch/latest/1/play.1.gz
+manpages/arch/latest/1/hledger.1.gz

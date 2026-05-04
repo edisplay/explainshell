@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 _HERE = Path(__file__).resolve()
 REPO_ROOT = _HERE.parents[3]
@@ -894,6 +894,476 @@ def diff_report(args: argparse.Namespace) -> int:
     return 0
 
 
+_AUDIT_TAG_STRIP_RE = re.compile(r"<[^>]+>")
+_AUDIT_QUAD_STAR_RE = re.compile(r"(?<!\\)\*{4,}")
+_AUDIT_EMPTY_EMPHASIS_RE = re.compile(r"<(em|strong)\b[^>]*>\s*</\1>")
+_AUDIT_ROFF_NAMED_ESCAPE_RE = re.compile(r"\\\[([A-Za-z0-9_-]+)\]")
+_AUDIT_ROFF_TWO_LETTER_ESCAPE_RE = re.compile(r"\\\(([A-Za-z0-9]{2})")
+_AUDIT_ROFF_FONT_ESCAPE_RE = re.compile(r"\\f[BIRP]\b")
+_AUDIT_VISIBLE_ZWNJ_RE = re.compile(r"&zwnj;")
+_AUDIT_VISIBLE_NBSP_RE = re.compile(r"&nbsp;")
+_AUDIT_VISIBLE_DOUBLE_AMP_RE = re.compile(r"&amp;amp;")
+_AUDIT_SYNOPSIS_HEADING_RE = re.compile(r"^#+\s+SYNOPSIS\s*$", re.IGNORECASE)
+_AUDIT_WHITESPACE_RE = re.compile(r"\s")
+_AUDIT_UNICODE_ESCAPE_RE = re.compile(r"^u[0-9A-Fa-f]{4,6}$")
+
+# Canonical mandoc named escapes from mandoc_char(7) — the union of the
+# two-letter `\(xx` forms and the bracketed `\[name]` forms.  A bracket-form
+# match like `\[bfrnt]` whose name is NOT in this set is authored content
+# (lsof.8 documents the C `\[bfrnt]` shorthand), not a leaked escape, so we
+# skip it.  Keeps the rule false-positive-free at Tier 1.
+KNOWN_MANDOC_ESCAPE_NAMES = frozenset(
+    {
+        "12",
+        "14",
+        "18",
+        "34",
+        "38",
+        "3d",
+        "58",
+        "78",
+        "AE",
+        "AN",
+        "Ah",
+        "Bq",
+        "CL",
+        "CR",
+        "Cs",
+        "DI",
+        "Do",
+        "Eu",
+        "Fc",
+        "Fi",
+        "Fl",
+        "Fn",
+        "Fo",
+        "HE",
+        "IJ",
+        "Im",
+        "N",
+        "OE",
+        "OK",
+        "OR",
+        "Of",
+        "Om",
+        "Po",
+        "Re",
+        "S1",
+        "S2",
+        "S3",
+        "SP",
+        "TP",
+        "Tp",
+        "XX",
+        "Ye",
+        "aa",
+        "ab",
+        "ac",
+        "ad",
+        "ae",
+        "ah",
+        "an",
+        "ao",
+        "ap",
+        "aq",
+        "at",
+        "ba",
+        "bb",
+        "bq",
+        "br",
+        "bu",
+        "bv",
+        "ca",
+        "char34",
+        "ci",
+        "co",
+        "coproduct",
+        "cq",
+        "ct",
+        "cu",
+        "dA",
+        "da",
+        "dd",
+        "de",
+        "dg",
+        "di",
+        "dq",
+        "em",
+        "en",
+        "eq",
+        "es",
+        "eu",
+        "fa",
+        "fc",
+        "ff",
+        "fi",
+        "fl",
+        "fm",
+        "fo",
+        "ga",
+        "gr",
+        "hA",
+        "ha",
+        "hbar",
+        "ho",
+        "hy",
+        "ib",
+        "if",
+        "ij",
+        "integral",
+        "ip",
+        "is",
+        "lA",
+        "lB",
+        "lC",
+        "la",
+        "lb",
+        "lc",
+        "lf",
+        "lh",
+        "lk",
+        "lq",
+        "lt",
+        "lz",
+        "mc",
+        "mi",
+        "mo",
+        "mu",
+        "nb",
+        "nc",
+        "ne",
+        "nm",
+        "no",
+        "oA",
+        "oa",
+        "oe",
+        "or",
+        "oq",
+        "pc",
+        "pd",
+        "pl",
+        "pp",
+        "product",
+        "ps",
+        "pt",
+        "rA",
+        "rB",
+        "rC",
+        "ra",
+        "rb",
+        "rc",
+        "rf",
+        "rg",
+        "rh",
+        "rk",
+        "rn",
+        "rq",
+        "rs",
+        "rt",
+        "ru",
+        "sb",
+        "sc",
+        "sd",
+        "Sd",
+        "sh",
+        "sl",
+        "sp",
+        "sq",
+        "sqrt",
+        "sqrtex",
+        "sr",
+        "ss",
+        "st",
+        "sum",
+        "tdi",
+        "te",
+        "tf",
+        "ti",
+        "tm",
+        "tmu",
+        "tno",
+        "ts",
+        "uA",
+        "ua",
+        "ul",
+        "vA",
+        "va",
+        "wp",
+        "braceex",
+        "braceleftbt",
+        "braceleftex",
+        "braceleftmid",
+        "bracelefttp",
+        "bracerightbt",
+        "bracerightex",
+        "bracerightmid",
+        "bracerighttp",
+        "bracketleftbt",
+        "bracketleftex",
+        "bracketlefttp",
+        "bracketrightbt",
+        "bracketrightex",
+        "bracketrighttp",
+        "parenleftbt",
+        "parenleftex",
+        "parenlefttp",
+        "parenrightbt",
+        "parenrightex",
+        "parenrighttp",
+        "radicalex",
+    }
+)
+
+
+def _audit_is_known_escape_name(name: str) -> bool:
+    return (
+        name in KNOWN_MANDOC_ESCAPE_NAMES
+        or _AUDIT_UNICODE_ESCAPE_RE.match(name) is not None
+    )
+
+
+AuditScanner = Callable[[str, str], list[tuple[int, str]]]
+
+
+def _audit_strip_tags(html: str) -> str:
+    return _AUDIT_TAG_STRIP_RE.sub("", html)
+
+
+def _audit_snippet(line: str, start: int, end: int, pad: int = 12) -> str:
+    return line[max(0, start - pad) : min(len(line), end + pad)]
+
+
+def _audit_scan_quad_star(markdown: str, html: str) -> list[tuple[int, str]]:
+    hits: list[tuple[int, str]] = []
+    for line_no, line in enumerate(markdown.splitlines(), 1):
+        for match in _AUDIT_QUAD_STAR_RE.finditer(line):
+            hits.append((line_no, _audit_snippet(line, match.start(), match.end())))
+    return hits
+
+
+def _audit_scan_empty_emphasis(markdown: str, html: str) -> list[tuple[int, str]]:
+    return [
+        (match.start(), match.group(0))
+        for match in _AUDIT_EMPTY_EMPHASIS_RE.finditer(html)
+    ]
+
+
+def _audit_scan_roff_named(markdown: str, html: str) -> list[tuple[int, str]]:
+    text = _audit_strip_tags(html)
+    return [
+        (match.start(), match.group(0))
+        for match in _AUDIT_ROFF_NAMED_ESCAPE_RE.finditer(text)
+        if _audit_is_known_escape_name(match.group(1))
+    ]
+
+
+def _audit_scan_roff_two_letter(markdown: str, html: str) -> list[tuple[int, str]]:
+    text = _audit_strip_tags(html)
+    return [
+        (match.start(), match.group(0))
+        for match in _AUDIT_ROFF_TWO_LETTER_ESCAPE_RE.finditer(text)
+        if _audit_is_known_escape_name(match.group(1))
+    ]
+
+
+def _audit_scan_roff_font(markdown: str, html: str) -> list[tuple[int, str]]:
+    text = _audit_strip_tags(html)
+    return [
+        (match.start(), match.group(0))
+        for match in _AUDIT_ROFF_FONT_ESCAPE_RE.finditer(text)
+    ]
+
+
+def _audit_scan_visible_zwnj(markdown: str, html: str) -> list[tuple[int, str]]:
+    text = _audit_strip_tags(html)
+    return [
+        (match.start(), match.group(0))
+        for match in _AUDIT_VISIBLE_ZWNJ_RE.finditer(text)
+    ]
+
+
+def _audit_scan_visible_nbsp(markdown: str, html: str) -> list[tuple[int, str]]:
+    text = _audit_strip_tags(html)
+    return [
+        (match.start(), match.group(0))
+        for match in _AUDIT_VISIBLE_NBSP_RE.finditer(text)
+    ]
+
+
+def _audit_scan_visible_double_amp(markdown: str, html: str) -> list[tuple[int, str]]:
+    text = _audit_strip_tags(html)
+    return [
+        (match.start(), match.group(0))
+        for match in _AUDIT_VISIBLE_DOUBLE_AMP_RE.finditer(text)
+    ]
+
+
+def _audit_scan_giant_markdown_line(markdown: str, html: str) -> list[tuple[int, str]]:
+    hits: list[tuple[int, str]] = []
+    for line_no, line in enumerate(markdown.splitlines(), 1):
+        if len(line) > 2000:
+            hits.append((line_no, line[:80] + "..."))
+    return hits
+
+
+def _audit_scan_synopsis_no_spaces_run(
+    markdown: str, html: str
+) -> list[tuple[int, str]]:
+    hits: list[tuple[int, str]] = []
+    in_synopsis = False
+    for line_no, line in enumerate(markdown.splitlines(), 1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            in_synopsis = bool(_AUDIT_SYNOPSIS_HEADING_RE.match(stripped))
+            continue
+        if in_synopsis and len(line) > 200 and not _AUDIT_WHITESPACE_RE.search(line):
+            hits.append((line_no, line[:80] + "..."))
+    return hits
+
+
+AUDIT_RULES: list[tuple[str, AuditScanner, str]] = [
+    (
+        "quad_star_run",
+        _audit_scan_quad_star,
+        "runs of 4+ stars (e.g. `**foo****bar**`)",
+    ),
+    (
+        "empty_emphasis_tag",
+        _audit_scan_empty_emphasis,
+        "empty <em>/<strong> tags",
+    ),
+    (
+        "roff_named_escape",
+        _audit_scan_roff_named,
+        r"`\[name]` form leaking into output",
+    ),
+    (
+        "roff_two_letter_escape",
+        _audit_scan_roff_two_letter,
+        r"`\(xx` form leaking into output",
+    ),
+    (
+        "roff_font_escape",
+        _audit_scan_roff_font,
+        r"`\fX` font escape leaking into output",
+    ),
+    (
+        "visible_zwnj_entity",
+        _audit_scan_visible_zwnj,
+        "literal &zwnj; entity in text",
+    ),
+    (
+        "visible_nbsp_entity",
+        _audit_scan_visible_nbsp,
+        "literal &nbsp; entity in text",
+    ),
+    (
+        "visible_double_amp",
+        _audit_scan_visible_double_amp,
+        "double-encoded ampersand &amp;amp;",
+    ),
+    (
+        "giant_markdown_line",
+        _audit_scan_giant_markdown_line,
+        "markdown line > 2000 chars",
+    ),
+    (
+        "synopsis_no_spaces_run",
+        _audit_scan_synopsis_no_spaces_run,
+        "synopsis line > 200 chars with no whitespace",
+    ),
+]
+
+
+def _select_audit_rules(rules_csv: str | None) -> list[tuple[str, AuditScanner, str]]:
+    if not rules_csv:
+        return list(AUDIT_RULES)
+    selected = {token.strip() for token in rules_csv.split(",") if token.strip()}
+    known = {rule_id for rule_id, _, _ in AUDIT_RULES}
+    unknown = selected - known
+    if unknown:
+        raise SystemExit(f"unknown rule_id(s): {', '.join(sorted(unknown))}")
+    return [rule for rule in AUDIT_RULES if rule[0] in selected]
+
+
+def _scan_audit_run(
+    run_dir: Path,
+    summary: dict[str, Any],
+    rules: list[tuple[str, AuditScanner, str]],
+) -> dict[str, list[tuple[str, int, list[str]]]]:
+    results: dict[str, list[tuple[str, int, list[str]]]] = {
+        rule_id: [] for rule_id, _, _ in rules
+    }
+    for page in summary["pages"]:
+        stem = page["stem"]
+        md_path = run_dir / "markdown" / f"{stem}.md"
+        html_path = run_dir / "html" / f"{stem}.html"
+        if not md_path.is_file() or not html_path.is_file():
+            continue
+        markdown = md_path.read_text()
+        html = html_path.read_text()
+        for rule_id, scanner, _ in rules:
+            hits = scanner(markdown, html)
+            if hits:
+                examples = [snippet for _, snippet in hits[:3]]
+                results[rule_id].append((page["path"], len(hits), examples))
+    return results
+
+
+def _print_audit_report(
+    run_dir: Path,
+    summary: dict[str, Any],
+    rules: list[tuple[str, AuditScanner, str]],
+    violations: dict[str, list[tuple[str, int, list[str]]]],
+) -> None:
+    print(f"audit: {run_dir}")
+    print(f"pages scanned: {summary.get('page_count', len(summary.get('pages', [])))}")
+    print()
+
+    rules_with_violations = 0
+    total_occurrences = 0
+    page_cap = 10
+    for rule_id, _, _ in rules:
+        per_page = violations[rule_id]
+        if not per_page:
+            print(f"{rule_id}: ✓ none")
+            print()
+            continue
+        rules_with_violations += 1
+        total_pages = len(per_page)
+        total_hits = sum(count for _, count, _ in per_page)
+        total_occurrences += total_hits
+        print(f"{rule_id}: {total_pages} pages, {total_hits} occurrences")
+        per_page_sorted = sorted(per_page, key=lambda item: (-item[1], item[0]))
+        for path, count, _ in per_page_sorted[:page_cap]:
+            print(f"  {path:40s}  {count}")
+        if len(per_page_sorted) > page_cap:
+            print(f"  ... +{len(per_page_sorted) - page_cap} pages")
+        first_example = next(
+            (example for _, _, examples in per_page_sorted for example in examples),
+            None,
+        )
+        if first_example:
+            print(f"  example: {first_example!r}")
+        print()
+
+    print(
+        f"summary: {rules_with_violations} of {len(rules)} rules with violations "
+        f"({total_occurrences} total occurrences)"
+    )
+
+
+def audit_run(args: argparse.Namespace) -> int:
+    run_dir = Path(args.run).resolve()
+    summary = _load_summary(run_dir)
+    rules = _select_audit_rules(args.rules)
+    violations = _scan_audit_run(run_dir, summary, rules)
+    _print_audit_report(run_dir, summary, rules, violations)
+    if args.fail_on_violation and any(violations[rule_id] for rule_id, _, _ in rules):
+        return 1
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -947,6 +1417,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Playwright screenshot timeout in milliseconds",
     )
     diff_p.set_defaults(func=diff_report)
+
+    audit_p = subparsers.add_parser(
+        "audit",
+        help="audit a render run for absolute (baseline-free) rendering bugs",
+    )
+    audit_p.add_argument("run", help="render run directory to audit")
+    audit_p.add_argument(
+        "--rules",
+        help=(
+            "comma-separated rule ids to apply (default: all). "
+            f"available: {', '.join(rule_id for rule_id, _, _ in AUDIT_RULES)}"
+        ),
+    )
+    audit_p.add_argument(
+        "--fail-on-violation",
+        action="store_true",
+        help="exit non-zero when any rule reports at least one violation",
+    )
+    audit_p.set_defaults(func=audit_run)
 
     return parser
 
