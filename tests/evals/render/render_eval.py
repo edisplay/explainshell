@@ -903,6 +903,7 @@ _AUDIT_ROFF_FONT_ESCAPE_RE = re.compile(r"\\f[BIRP]\b")
 _AUDIT_VISIBLE_ZWNJ_RE = re.compile(r"&zwnj;")
 _AUDIT_VISIBLE_NBSP_RE = re.compile(r"&nbsp;")
 _AUDIT_VISIBLE_DOUBLE_AMP_RE = re.compile(r"&amp;amp;")
+_AUDIT_OPEN_DOUBLE_BACKTICK_RE = re.compile(r"\\`\\`")
 _AUDIT_SYNOPSIS_HEADING_RE = re.compile(r"^#+\s+SYNOPSIS\s*$", re.IGNORECASE)
 _AUDIT_WHITESPACE_RE = re.compile(r"\s")
 _AUDIT_UNICODE_ESCAPE_RE = re.compile(r"^u[0-9A-Fa-f]{4,6}$")
@@ -1198,6 +1199,14 @@ def _audit_scan_visible_double_amp(markdown: str, html: str) -> list[tuple[int, 
     ]
 
 
+def _audit_scan_open_double_backtick(markdown: str, html: str) -> list[tuple[int, str]]:
+    hits: list[tuple[int, str]] = []
+    for line_no, line in enumerate(markdown.splitlines(), 1):
+        for match in _AUDIT_OPEN_DOUBLE_BACKTICK_RE.finditer(line):
+            hits.append((line_no, _audit_snippet(line, match.start(), match.end())))
+    return hits
+
+
 def _audit_scan_giant_markdown_line(markdown: str, html: str) -> list[tuple[int, str]]:
     hits: list[tuple[int, str]] = []
     for line_no, line in enumerate(markdown.splitlines(), 1):
@@ -1261,6 +1270,11 @@ AUDIT_RULES: list[tuple[str, AuditScanner, str]] = [
         "visible_double_amp",
         _audit_scan_visible_double_amp,
         "double-encoded ampersand &amp;amp;",
+    ),
+    (
+        "visible_open_double_backtick",
+        _audit_scan_open_double_backtick,
+        r"literal `\`\`` in markdown (asymmetric typographic open quote)",
     ),
     (
         "giant_markdown_line",
