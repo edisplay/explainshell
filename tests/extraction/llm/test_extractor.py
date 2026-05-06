@@ -13,7 +13,6 @@ from explainshell import models
 from explainshell.errors import ExtractionError, SkippedExtraction
 from explainshell.extraction import ExtractorConfig
 from explainshell.extraction.llm.extractor import (
-    ChunkResult,
     LLMExtractor,
     PreparedFile,
     _BLACKLISTED_SOURCES,
@@ -27,17 +26,36 @@ from explainshell.extraction.llm.response import normalize_subcommands
 # ---------------------------------------------------------------------------
 
 
+def _make_mock_extractor(
+    model: str = "openai/test-model",
+    run_dir: str | None = None,
+    debug: bool = False,
+) -> LLMExtractor:
+    """Build an LLMExtractor whose provider is a MagicMock.
+
+    Patching make_provider sidesteps eager client construction (e.g.
+    OpenAIProvider's OpenAI() call which now fails when credentials are
+    missing — irrelevant for these tests).  retryable_exceptions is set
+    so _call_llm's `except retryable as e:` clause type-checks.
+    """
+    cfg = ExtractorConfig(model=model, run_dir=run_dir, debug=debug)
+    provider = MagicMock(retryable_exceptions=(ConnectionError,))
+    with patch(
+        "explainshell.extraction.llm.extractor.make_provider",
+        return_value=provider,
+    ):
+        return LLMExtractor(cfg)
+
+
 class TestExtractIntegration(unittest.TestCase):
     def _make_extractor(self, model="openai/test-model", run_dir=None, debug=False):
-        cfg = ExtractorConfig(model=model, run_dir=run_dir, debug=debug)
-        return LLMExtractor(cfg)
+        return _make_mock_extractor(model=model, run_dir=run_dir, debug=debug)
 
     @patch(
         "explainshell.extraction.common.roff_utils.detect_nested_cmd",
         return_value=False,
     )
     @patch("explainshell.extraction.common.manpage.get_synopsis_and_aliases")
-    @patch("explainshell.extraction.llm.extractor.LLMExtractor._call_llm")
     @patch("explainshell.extraction.llm.extractor.get_manpage_text")
     @patch("explainshell.extraction.llm.extractor.manpage.get_synopsis_and_aliases")
     @patch("explainshell.extraction.common.gz_sha256", return_value="abc123")
@@ -46,7 +64,6 @@ class TestExtractIntegration(unittest.TestCase):
         mock_sha,
         mock_synopsis,
         mock_text,
-        mock_llm,
         mock_common_synopsis,
         mock_nested_cmd,
     ):
@@ -55,32 +72,14 @@ class TestExtractIntegration(unittest.TestCase):
         mock_text.return_value = (
             "**-n**\n\nDo not output trailing newline.\n\n**-e**\n\nEnable escapes."
         )
-        mock_llm.return_value = ChunkResult(
-            data={
-                "dashless_opts": False,
-                "options": [
-                    {
-                        "short": ["-n"],
-                        "long": [],
-                        "has_argument": False,
-                        "lines": [1, 3],
-                    },
-                    {
-                        "short": ["-e"],
-                        "long": [],
-                        "has_argument": False,
-                        "lines": [5, 7],
-                    },
-                ],
-            },
-            messages=[
-                {"role": "system", "content": "..."},
-                {"role": "user", "content": "..."},
-            ],
-            raw_response='{"options": []}',
-            usage=TokenUsage(0, 0),
-        )
         ext = self._make_extractor()
+        ext.provider.call.return_value = (
+            '{"dashless_opts": false, "options": ['
+            '{"short": ["-n"], "long": [], "has_argument": false, "lines": [1, 3]},'
+            '{"short": ["-e"], "long": [], "has_argument": false, "lines": [5, 7]}'
+            "]}",
+            TokenUsage(0, 0),
+        )
         result = ext.extract("dummy.1.gz")
         mp, raw = result.mp, result.raw
         self.assertIsInstance(mp, models.ParsedManpage)
@@ -99,7 +98,6 @@ class TestExtractIntegration(unittest.TestCase):
         return_value=False,
     )
     @patch("explainshell.extraction.common.manpage.get_synopsis_and_aliases")
-    @patch("explainshell.extraction.llm.extractor.LLMExtractor._call_llm")
     @patch("explainshell.extraction.llm.extractor.get_manpage_text")
     @patch("explainshell.extraction.llm.extractor.manpage.get_synopsis_and_aliases")
     @patch("explainshell.extraction.common.gz_sha256", return_value="abc123")
@@ -108,33 +106,20 @@ class TestExtractIntegration(unittest.TestCase):
         mock_sha,
         mock_synopsis,
         mock_text,
-        mock_llm,
         mock_common_synopsis,
         mock_nested_cmd,
     ):
         mock_synopsis.return_value = (None, [("dummy", 10)])
         mock_common_synopsis.return_value = (None, [("dummy", 10)])
         mock_text.return_value = "**-v**\n\nVerbose."
-        mock_llm.return_value = ChunkResult(
-            data={
-                "options": [
-                    {"short": ["-x"], "long": [], "lines": "bad"},
-                    {
-                        "short": ["-v"],
-                        "long": [],
-                        "has_argument": False,
-                        "lines": [1, 3],
-                    },
-                ],
-            },
-            messages=[
-                {"role": "system", "content": "..."},
-                {"role": "user", "content": "..."},
-            ],
-            raw_response='{"options": []}',
-            usage=TokenUsage(0, 0),
-        )
         ext = self._make_extractor()
+        ext.provider.call.return_value = (
+            '{"options": ['
+            '{"short": ["-x"], "long": [], "lines": "bad"},'
+            '{"short": ["-v"], "long": [], "has_argument": false, "lines": [1, 3]}'
+            "]}",
+            TokenUsage(0, 0),
+        )
         result = ext.extract("dummy.1.gz")
         self.assertEqual(len(result.mp.options), 1)
         self.assertEqual(result.mp.options[0].short, ["-v"])
@@ -144,7 +129,6 @@ class TestExtractIntegration(unittest.TestCase):
         return_value=False,
     )
     @patch("explainshell.extraction.common.manpage.get_synopsis_and_aliases")
-    @patch("explainshell.extraction.llm.extractor.LLMExtractor._call_llm")
     @patch("explainshell.extraction.llm.extractor.get_manpage_text")
     @patch("explainshell.extraction.llm.extractor.manpage.get_synopsis_and_aliases")
     @patch("explainshell.extraction.common.gz_sha256", return_value="abc123")
@@ -153,7 +137,6 @@ class TestExtractIntegration(unittest.TestCase):
         mock_sha,
         mock_synopsis,
         mock_text,
-        mock_llm,
         mock_common_synopsis,
         mock_nested_cmd,
     ):
@@ -161,26 +144,9 @@ class TestExtractIntegration(unittest.TestCase):
         mock_common_synopsis.return_value = ("a test tool", [("dummy", 10)])
         mock_text.return_value = "**-v**\n\nVerbose."
         raw_response = '{"options": [{"short": ["-v"], "long": [], "has_argument": false, "lines": [1, 3]}]}'
-        mock_llm.return_value = ChunkResult(
-            data={
-                "options": [
-                    {
-                        "short": ["-v"],
-                        "long": [],
-                        "has_argument": False,
-                        "lines": [1, 3],
-                    },
-                ]
-            },
-            messages=[
-                {"role": "system", "content": "sys"},
-                {"role": "user", "content": "usr"},
-            ],
-            raw_response=raw_response,
-            usage=TokenUsage(0, 0),
-        )
         with tempfile.TemporaryDirectory() as tmpdir:
             ext = self._make_extractor(run_dir=tmpdir, debug=True)
+            ext.provider.call.return_value = (raw_response, TokenUsage(0, 0))
             result = ext.extract("dummy.1.gz")
             self.assertEqual(len(result.mp.options), 1)
             md_path = os.path.join(tmpdir, "markdown", "dummy.md")
@@ -229,25 +195,6 @@ def _make_prepared(n_chunks: int = 2) -> PreparedFile:
     )
 
 
-def _chunk_result(options: list[dict]) -> ChunkResult:
-    return ChunkResult(
-        data={"options": options},
-        messages=[
-            {"role": "system", "content": "..."},
-            {"role": "user", "content": "..."},
-        ],
-        raw_response='{"options": []}',
-        usage=TokenUsage(0, 0),
-    )
-
-
-_CHUNK0_OPTIONS: list[dict] = [
-    {"short": ["-a"], "long": [], "has_argument": False, "lines": [1, 3]},
-]
-_CHUNK1_OPTIONS: list[dict] = [
-    {"short": ["-b"], "long": [], "has_argument": False, "lines": [5, 7]},
-]
-
 _CHUNK0_JSON = (
     '{"options": [{"short": ["-a"], "long": [], '
     '"has_argument": false, "lines": [1, 3]}]}'
@@ -261,9 +208,8 @@ _CHUNK1_JSON = (
 class TestMultiChunkExtract(unittest.TestCase):
     """Interactive extract() path with multiple chunks."""
 
-    def _make_extractor(self) -> LLMExtractor:
-        cfg = ExtractorConfig(model="openai/test-model")
-        return LLMExtractor(cfg)
+    def _make_extractor(self, run_dir: str | None = None) -> LLMExtractor:
+        return _make_mock_extractor(run_dir=run_dir)
 
     @patch(
         "explainshell.extraction.common.roff_utils.detect_nested_cmd",
@@ -271,39 +217,34 @@ class TestMultiChunkExtract(unittest.TestCase):
     )
     @patch("explainshell.extraction.common.manpage.get_synopsis_and_aliases")
     @patch("explainshell.extraction.common.gz_sha256", return_value="abc123")
-    @patch("explainshell.extraction.llm.extractor.LLMExtractor._call_llm")
     @patch("explainshell.extraction.llm.extractor.LLMExtractor.prepare")
     def test_multi_chunk_merges_options(
         self,
         mock_prepare,
-        mock_llm,
         mock_sha,
         mock_common_synopsis,
         mock_nested_cmd,
     ):
         mock_prepare.return_value = _make_prepared(2)
         mock_common_synopsis.return_value = ("test tool", [("dummy", 10)])
-        mock_llm.side_effect = [
-            _chunk_result(_CHUNK0_OPTIONS),
-            _chunk_result(_CHUNK1_OPTIONS),
-        ]
 
         ext = self._make_extractor()
+        ext.provider.call.side_effect = [
+            (_CHUNK0_JSON, TokenUsage(0, 0)),
+            (_CHUNK1_JSON, TokenUsage(0, 0)),
+        ]
+
         result = ext.extract("dummy.1.gz")
         self.assertEqual(len(result.mp.options), 2)
         flags = {opt.short[0] for opt in result.mp.options}
         self.assertEqual(flags, {"-a", "-b"})
-        self.assertEqual(mock_llm.call_count, 2)
+        self.assertEqual(ext.provider.call.call_count, 2)
 
     def test_call_llm_invalid_response_preserves_raw(self):
         """_call_llm propagates raw_response when the LLM returns invalid JSON structure."""
         bad_response = '{"error": "waiting for remaining parts"}'
-        mock_provider = MagicMock()
-        mock_provider.call.return_value = (bad_response, TokenUsage(10, 5))
-        mock_provider.retryable_exceptions = (ConnectionError,)
-
         ext = self._make_extractor()
-        ext.provider = mock_provider
+        ext.provider.call.return_value = (bad_response, TokenUsage(10, 5))
 
         with self.assertRaises(ExtractionError) as ctx:
             ext._call_llm("some user content")
@@ -339,16 +280,11 @@ class TestMultiChunkExtract(unittest.TestCase):
     def test_extract_invalid_chunk0_dumps_failed_response(self, mock_prepare):
         """Interactive extract() dumps the raw response when chunk 0 fails validation."""
         bad_response = '{"error": "waiting for remaining parts"}'
-        mock_provider = MagicMock()
-        mock_provider.call.return_value = (bad_response, TokenUsage(10, 5))
-        mock_provider.retryable_exceptions = (ConnectionError,)
-
         mock_prepare.return_value = _make_prepared(1)
 
         with tempfile.TemporaryDirectory() as fail_dir:
-            cfg = ExtractorConfig(model="openai/test-model", run_dir=fail_dir)
-            ext = LLMExtractor(cfg)
-            ext.provider = mock_provider
+            ext = self._make_extractor(run_dir=fail_dir)
+            ext.provider.call.return_value = (bad_response, TokenUsage(10, 5))
 
             with self.assertRaises(ExtractionError):
                 ext.extract("dummy.1.gz")
@@ -364,8 +300,7 @@ class TestMultiChunkFinalize(unittest.TestCase):
     """Batch finalize() path with multiple chunks."""
 
     def _make_extractor(self, run_dir: str | None = None) -> LLMExtractor:
-        cfg = ExtractorConfig(model="openai/test-model", run_dir=run_dir)
-        return LLMExtractor(cfg)
+        return _make_mock_extractor(run_dir=run_dir)
 
     @patch(
         "explainshell.extraction.common.roff_utils.detect_nested_cmd",
