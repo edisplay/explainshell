@@ -40,9 +40,15 @@ def _make_mock_extractor(
     """
     cfg = ExtractorConfig(model=model, run_dir=run_dir, debug=debug)
     provider = MagicMock(retryable_exceptions=(ConnectionError,))
-    with patch(
-        "explainshell.extraction.llm.extractor.make_provider",
-        return_value=provider,
+    with (
+        patch(
+            "explainshell.extraction.llm.extractor.make_provider",
+            return_value=provider,
+        ),
+        patch(
+            "explainshell.extraction.llm.extractor.make_batch_provider",
+            return_value=MagicMock(),
+        ),
     ):
         return LLMExtractor(cfg)
 
