@@ -89,7 +89,7 @@ def inject_distros():
 
 @bp.route("/")
 def index():
-    return render_template("index.html")
+    return _cacheable_explain_response(render_template("index.html"))
 
 
 debug_bp = Blueprint("manpage", __name__)
